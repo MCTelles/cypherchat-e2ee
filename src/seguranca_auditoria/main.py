@@ -3,12 +3,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from seguranca_auditoria.config import get_settings
-from seguranca_auditoria.routers import auth
+from seguranca_auditoria.routers import auth, keys
 
 get_settings()  # fail at startup on missing/invalid configuration (e.g. weak JWT secret)
 
 app = FastAPI()
 app.include_router(auth.router)
+app.include_router(keys.router)
 
 
 @app.exception_handler(RequestValidationError)

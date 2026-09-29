@@ -3,8 +3,9 @@
 Aplicação local de mensagens em tempo real com criptografia ponta a ponta,
 autenticação JWT e auditoria de segurança.
 
-> **Estado atual:** estrutura base e autenticação (cadastro, login e JWT).
-> E2EE, mensagens, WebSocket e auditoria ainda não foram implementadas.
+> **Estado atual:** estrutura base, autenticação (cadastro, login e JWT) e
+> gestão de chaves públicas X25519. Cifragem de mensagens, mensagens,
+> WebSocket e auditoria ainda não foram implementadas.
 
 ## Pré-requisitos
 
@@ -46,8 +47,20 @@ uv run init-db
 ```
 
 Cria as tabelas `users`, `public_keys`, `encrypted_messages` e `audit_logs`
-(`create_all`; é idempotente e não altera tabelas existentes). Migrações com
+(`create_all`; é idempotente e **não altera tabelas existentes**). Migrações com
 Alembic ainda não estão configuradas.
+
+**Banco criado antes da gestão de chaves:** aplique as atualizações de esquema
+de `sql/` (uma vez; são idempotentes e não apagam dados):
+
+```bash
+psql 'postgresql://USUARIO:SENHA@127.0.0.1:5432/NOME_DO_BANCO' -v ON_ERROR_STOP=1 \
+  -f sql/0001_public_keys_one_active_per_user.sql
+```
+
+O `0001` cria o índice único parcial que garante uma chave ativa por usuário.
+Falha, sem alterar nada, se algum usuário já tiver 2 ou mais chaves ativas
+(a consulta de verificação está no cabeçalho do arquivo).
 
 ## Iniciar a API
 
@@ -122,6 +135,88 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8000/auth/login -H 'Content-Type: appli
 
 curl http://127.0.0.1:8000/auth/me -H "Authorization: Bearer $TOKEN"
 ```
+
+## Chaves públicas (X25519)
+
+Todas as rotas exigem `Authorization: Bearer <token>`.
+
+**Algoritmo e representação:** X25519 (troca de chaves). A chave pública é
+enviada como **Base64 padrão (RFC 4648, com `=`) dos 32 bytes brutos** (formato
+Raw). São rejeitados: Base64 inválido ou não canônico, tamanho diferente de 32
+bytes e pontos de ordem pequena. Isso valida apenas o **formato**; o servidor
+não tem como provar que o cliente possui a chave privada. Chaves privadas
+nunca devem ser enviadas, e a API não as aceita.
+
+**Fingerprint:** `SHA-256` dos 32 bytes brutos, em hexadecimal minúsculo (64
+caracteres), calculado no servidor.
+
+> **Verifique o fingerprint por um canal confiável** (pessoalmente, por
+> telefone, por outro meio já autenticado). A rota `GET /users/{id}/keys/active`
+> entrega a chave que o *servidor* tem. Sem comparar o fingerprint fora da
+> API, um servidor comprometido, ou uma conta invadida, poderia substituir a
+> chave de alguém sem que ninguém perceba. O cadastro autenticado sozinho não
+> resolve isso.
+
+### `POST /keys`
+
+```json
+{"algorithm": "X25519", "public_key": "<base64 de 32 bytes>"}
+```
+
+Só esses dois campos são aceitos (`user_id`, `fingerprint`, `is_active`,
+`revoked_at` etc. resultam em 422). A chave é vinculada ao usuário do token.
+
+| Situação | Resposta |
+|---|---|
+| Chave nova, sem outra chave ativa | 201 com o registro |
+| Mesma chave ativa do próprio usuário reenviada | 200, mesmo registro (idempotente) |
+| Já existe outra chave ativa do usuário | 409: revogue antes |
+| Chave que o próprio usuário já revogou | 409: gere um novo par; não há reativação |
+| Chave já cadastrada por outro usuário | 409 |
+| Formato, tamanho ou algoritmo inválido | 422 |
+
+Resposta: `{"id", "algorithm", "public_key", "fingerprint", "is_active", "created_at", "revoked_at"}`.
+A unicidade da chave ativa por usuário é garantida pelo banco (índice único
+parcial), inclusive sob requisições concorrentes.
+
+### `GET /keys/me`
+
+Lista todas as chaves do usuário (ativas e revogadas, mais recentes primeiro),
+com os mesmos campos acima.
+
+### `GET /users/{user_id}/keys/active`
+
+Retorna `{"id", "user_id", "algorithm", "public_key", "fingerprint", "created_at"}`
+da chave ativa. Usuário inexistente, usuário inativo ou sem chave ativa dão o
+mesmo `404` (`Active key not found`). `user_id` que não seja UUID dá 422.
+
+### `POST /keys/{key_id}/revoke`
+
+Sem corpo. Só o dono revoga: chave inexistente ou de outro usuário dão `404`
+(`Key not found`). Marca `is_active=false` e `revoked_at` (UTC); o registro é
+mantido. Repetir a chamada retorna 200 com o mesmo registro (o `revoked_at`
+original é preservado).
+
+### Exemplo local
+
+O par é gerado no cliente; só a pública é enviada. O script grava a privada em
+um arquivo com permissão 0600 (não sobrescreve arquivos existentes):
+
+```bash
+uv run python examples/generate_keypair.py minha_chave_privada.bin | tee /tmp/par.txt
+PUB=$(sed -n 's/^public_key : //p' /tmp/par.txt)
+
+curl -X POST http://127.0.0.1:8000/keys -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"algorithm\":\"X25519\",\"public_key\":\"$PUB\"}"
+
+curl http://127.0.0.1:8000/keys/me -H "Authorization: Bearer $TOKEN"
+curl -X POST http://127.0.0.1:8000/keys/ID_DA_CHAVE/revoke -H "Authorization: Bearer $TOKEN"
+```
+
+(`$TOKEN` vem do login, veja a seção Autenticação.) Escolher X25519 não define o
+protocolo E2EE: cifragem, derivação de chaves e autenticação das mensagens
+ficam para a próxima etapa.
 
 ## Testes
 

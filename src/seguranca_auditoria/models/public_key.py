@@ -1,12 +1,22 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, DateTime, LargeBinary, String, func
+from sqlalchemy import Column, DateTime, Index, LargeBinary, String, func, text
 from sqlmodel import Field, SQLModel
 
 
 class PublicKey(SQLModel, table=True):
     __tablename__ = "public_keys"
+    __table_args__ = (
+        # At most one active key per user, enforced by the database.
+        # Existing databases: apply sql/0001_public_keys_one_active_per_user.sql.
+        Index(
+            "uq_public_keys_one_active_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     user_id: UUID = Field(
