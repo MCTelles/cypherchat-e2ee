@@ -4,8 +4,9 @@ Aplicação local de mensagens em tempo real com criptografia ponta a ponta,
 autenticação JWT e auditoria de segurança.
 
 > **Estado atual:** estrutura base, autenticação (cadastro, login e JWT) e
-> gestão de chaves públicas X25519. Cifragem de mensagens, mensagens,
-> WebSocket e auditoria ainda não foram implementadas.
+> gestão de chaves públicas X25519 e um módulo de cifragem de mensagens no
+> cliente (apenas local: ainda não há API de mensagens, persistência, WebSocket
+> ou auditoria). Não é um sistema pronto para produção.
 
 ## Pré-requisitos
 
@@ -217,6 +218,127 @@ curl -X POST http://127.0.0.1:8000/keys/ID_DA_CHAVE/revoke -H "Authorization: Be
 (`$TOKEN` vem do login, veja a seção Autenticação.) Escolher X25519 não define o
 protocolo E2EE: cifragem, derivação de chaves e autenticação das mensagens
 ficam para a próxima etapa.
+
+## Criptografia de mensagens (cliente)
+
+Módulo `seguranca_auditoria.client`, executado **no cliente**. Não depende de
+FastAPI, banco, JWT nem da configuração do servidor (há um teste que verifica
+isso). Nesta etapa nada é enviado nem guardado pelo servidor, e não existe
+endpoint que receba chaves privadas ou texto original.
+
+### Protocolo
+
+HPKE ([RFC 9180](https://www.rfc-editor.org/rfc/rfc9180)), **modo Auth**,
+`DHKEM(X25519, HKDF-SHA256)` (0x0020), `HKDF-SHA256` (0x0001) e `AES-128-GCM`
+(0x0001), pela biblioteca [PyHPKE](https://github.com/dajiaji/pyhpke) 0.6.5
+(licença MIT, exige `cryptography>=42.0.1,<52` e Python >= 3.10, compatível com
+o `cryptography` 50.x do projeto; passou nos vetores oficiais da RFC 9180 em
+seus próprios testes, e o projeto informa que **não teve auditoria formal**).
+O KEM, a derivação de chaves e os nonces são da biblioteca; este código só a usa.
+
+- Cada mensagem cria uma **nova encapsulação** (`enc`) e um **novo contexto**
+  HPKE, com **uma única** cifragem. Por isso não existe campo `nonce` externo.
+- `info` = `CypherChat E2EE v1`.
+- **AAD** = JSON determinístico dos metadados (`version`, `mode`, `suite`,
+  `message_id`, `sender`, `recipient`; chaves ordenadas, sem espaços, ASCII).
+- A remetente usa a **chave privada dela** e a **chave pública verificada** do
+  destinatário. O destinatário usa a **chave privada dele** e a **chave pública
+  verificada** do remetente.
+
+### Envelope (versão 1)
+
+```json
+{
+  "version": 1,
+  "mode": "auth",
+  "suite": "HPKE-Auth-X25519-SHA256-AES128GCM",
+  "message_id": "<uuid>",
+  "sender":    {"user_id": "<uuid>", "key_id": "<uuid>", "fingerprint": "<sha256 hex>"},
+  "recipient": {"user_id": "<uuid>", "key_id": "<uuid>", "fingerprint": "<sha256 hex>"},
+  "enc": "<base64 de 32 bytes>",
+  "ciphertext": "<base64 do texto cifrado + tag GCM de 16 bytes>"
+}
+```
+
+Base64 padrão canônico (com `=`). UUIDs em minúsculas com hífens. O `key_id` é o
+`id` devolvido por `/keys`. **O envelope não contém chaves públicas**: o
+cliente só usa chaves que ele mesmo confia (`TrustedKey`, que confere o
+fingerprint contra os bytes da chave).
+
+**Limites:** mensagem de 1 a 65.536 bytes em UTF-8 (`MAX_PLAINTEXT_BYTES`);
+envelope de até 131.072 bytes (`MAX_ENVELOPE_BYTES`). Campos desconhecidos,
+ausentes ou duplicados, Base64 não canônico, UUIDs mal formados, JSON com
+`NaN`/aninhamento excessivo e tamanhos incorretos são rejeitados (`EnvelopeError`).
+Versão, modo ou suíte diferentes dos acima são rejeitados sem *fallback*.
+
+### API
+
+```python
+from seguranca_auditoria.client import TrustedKey, encrypt_message, decrypt_message
+
+envelope = encrypt_message("texto", sender_private_key=..., sender=eu, recipient=ele)
+envelope.to_json()  # string para enviar
+
+resultado = decrypt_message(json_recebido, recipient_private_key=..., recipient=eu, sender=remetente_esperado)
+resultado.plaintext, resultado.message_id
+```
+
+Na decifragem, remetente e destinatário do envelope são **comparados** com os
+que o cliente espera (`ParticipantMismatchError` se diferirem); os valores do
+envelope não provam identidade. Falhas de autenticação ou de decifragem levantam
+`DecryptionError` com mensagem fixa e nenhum conteúdo parcial. O módulo não
+registra plaintext, chaves nem segredos e usa apenas a aleatoriedade da biblioteca.
+
+### Demonstração local
+
+```bash
+uv run python examples/e2ee_demo.py             # chaves temporárias
+uv run python examples/e2ee_demo.py ./chaves    # grava/reusa chaves/alice.key e bob.key
+```
+
+Gera ou carrega duas chaves (arquivos 0600, nunca sobrescritos; arquivos legíveis
+por outros usuários são recusados), cifra uma mensagem fictícia, mostra o
+envelope, decifra como destinatário e demonstra a rejeição de um envelope adulterado.
+Não coloque chaves privadas reais em repositórios.
+
+### Mapeamento para o modelo `encrypted_messages` (sem alterar o banco agora)
+
+| Envelope | Coluna |
+|---|---|
+| `message_id` | `id` |
+| `sender.user_id` / `recipient.user_id` | `sender_id` / `recipient_id` |
+| `ciphertext` (bytes) | `ciphertext` |
+| `enc` (bytes) | `ephemeral_public_key` |
+| `suite` (33 caracteres) | `algorithm` (limite de 50) |
+| (não existe: o HPKE gerencia o nonce) | `nonce`, hoje `NOT NULL` |
+
+Pendências para a etapa de mensagens: tornar `nonce` opcional (ou gravar valor
+vazio de forma explícita), e guardar `version`, `mode`, os `key_id` e os
+fingerprints, necessários para reconstruir o AAD (novas colunas ou o envelope
+JSON completo). Isso exigirá uma atualização de esquema versionada.
+
+### Limitações (leia antes de confiar)
+
+- **A confiança depende da verificação das chaves públicas.** Se o cliente
+  aceitar uma chave trocada pelo servidor, a proteção acaba. Compare
+  fingerprints por outro canal.
+- **HPKE Auth não é uma assinatura digital pública.** Só o destinatário
+  consegue verificar o remetente, e ele próprio poderia forjar uma mensagem
+  "vinda" do remetente para si mesmo: não há não repúdio perante terceiros.
+- **Sem sigilo futuro em relação às chaves estáticas.** Se a chave privada do
+  destinatário for comprometida, mensagens anteriores guardadas podem ser
+  decifradas (e a do remetente permite forjar mensagens a esse destinatário).
+- **Metadados visíveis:** `message_id`, identificadores de usuários e chaves,
+  fingerprints, versão, modo, suíte e **tamanhos** aparecem no envelope.
+- **Replay:** um envelope válido pode ser reapresentado. É preciso controle
+  adicional, como registro de `message_id` já recebidos.
+- **Chaves antigas:** para ler mensagens antigas o cliente precisa manter as
+  chaves privadas antigas (revogar uma chave não descarta o segredo).
+- **Leitura pelo próprio remetente:** a mensagem só é decifrável pelo
+  destinatário; guardar uma cópia legível para quem enviou exige solução
+  específica (por exemplo, cifrar uma segunda cópia para a própria chave).
+- Não há ordem de mensagens, sessões ou *ratchet*. **Isto não equivale ao
+  Signal** nem oferece proteção completa para produção; não houve auditoria.
 
 ## Testes
 
