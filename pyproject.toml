@@ -10,7 +10,7 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi[standard]>=0.141.1",
     "uvicorn[standard]>=0.23.2",
-    "cryptography>=41.0.3,<42.0.0",
+    "cryptography>=50.0.1,<51",
     "sqlmodel>=0.0.47",
     "sqlalchemy>=2.0.54",
     "psycopg[binary]>=3.3.6",
@@ -21,12 +21,13 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "httpx>=0.28.1",
     "websockets>=17.0",
+    "pyhpke>=0.6.5,<0.7",
 ]
 
 [project.scripts]
 seguranca-auditoria = "seguranca_auditoria:main"
 init-db = "seguranca_auditoria.database:create_db_and_tables"
-cypherchat = "seguranca_auditoria.client:main"
+cypherchat = "seguranca_auditoria.terminal_client:main"
 bootstrap-admin = "seguranca_auditoria.bootstrap:main"
 
 [build-system]

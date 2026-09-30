@@ -12,6 +12,16 @@ Aplicação local de mensagens em tempo real para a G1. A interface é um client
 
 Os identificadores de remetente/destinatário entram na assinatura e nos dados autenticados do AES-GCM. O servidor ainda vê **metadados** (usuários, horários, tamanho do texto cifrado). O primeiro contato depende da comparação do fingerprint fora da aplicação. O esquema usa chave efêmera do remetente, mas **não oferece sigilo retroativo completo** se a chave privada do destinatário for comprometida. Não é um protocolo auditado para uso em produção.
 
+## Experimento HPKE
+
+O projeto também contém um módulo cliente separado em `seguranca_auditoria.client` que implementa HPKE Auth (RFC 9180) com PyHPKE. Ele gera um envelope diferente do chat acima e inclui testes com vetores da RFC, adulteração e limites de entrada. Execute uma demonstração local sem servidor ou banco:
+
+```sh
+uv run python examples/e2ee_demo.py
+```
+
+O comando `cypherchat` usa `seguranca_auditoria.terminal_client` e o protocolo X25519/AES-GCM/Ed25519 descrito acima. **O WebSocket não aceita envelopes HPKE.** A integração exigiria uma versão de mensagem, mudanças no banco e no cliente. O experimento HPKE não substitui o fluxo da demonstração da G1. A revogação e troca de chaves públicas também precisam ser adaptadas ao par de chaves de criptografia e assinatura do chat antes de entrarem na API ativa.
+
 ## Execução local
 
 Requer Python 3.14, `uv` e PostgreSQL. O caminho mais rápido para testes automatizados usa SQLite isolado; a instalação de demonstração deve usar PostgreSQL para cumprir os requisitos de roles e conexão local.
@@ -70,7 +80,7 @@ Os limitadores de requisições são em memória e foram feitos para **um proces
 uv run pytest -q
 ```
 
-Os testes exercitam criptografia, adulteração, isolamento de roles, mass assignment, envio/recepção por WebSocket e restrição de confirmação ao destinatário.
+Os testes exercitam criptografia do chat, adulteração, isolamento de roles, mass assignment, envio/recepção por WebSocket e restrição de confirmação ao destinatário. O módulo HPKE tem testes próprios, incluindo vetores da RFC 9180.
 
 ## Demonstração de 5–10 minutos
 

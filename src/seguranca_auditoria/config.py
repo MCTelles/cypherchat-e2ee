@@ -1,8 +1,21 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+MIN_JWT_SECRET_BYTES = 32
+_PLACEHOLDER_SECRETS = {
+    "substitua_por_um_segredo",
+    "changeme",
+    "change-me",
+    "change_me",
+    "secret",
+    "your-secret-key",
+    "your_secret_key",
+    "jwt_secret_key",
+    "password",
+}
 
 
 class Settings(BaseSettings):
@@ -26,11 +39,30 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,
     )
 
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def _validate_jwt_secret(cls, value: SecretStr) -> SecretStr:
+        secret = value.get_secret_value()
+        normalized = secret.strip().lower()
+        if not normalized:
+            raise ValueError("JWT_SECRET_KEY must not be empty")
+        if normalized in _PLACEHOLDER_SECRETS or normalized.startswith("substitua"):
+            raise ValueError("JWT_SECRET_KEY must not be a placeholder value")
+        if len(secret.encode("utf-8")) < MIN_JWT_SECRET_BYTES:
+            raise ValueError(
+                f"JWT_SECRET_KEY must have at least {MIN_JWT_SECRET_BYTES} bytes"
+            )
+        return value
+
+    @field_validator("access_token_expire_minutes")
+    @classmethod
+    def _validate_expiration(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be positive")
+        return value
+
     @model_validator(mode="after")
     def validate_security(self) -> "Settings":
-        secret = self.jwt_secret_key.get_secret_value()
-        if len(secret) < 32 or secret.startswith("SUBSTITUA_"):
-            raise ValueError("JWT_SECRET_KEY deve ser aleatório e ter pelo menos 32 caracteres")
         if self.app_env == "production" and not self.database_url.startswith("postgresql+psycopg://"):
             raise ValueError("Produção exige PostgreSQL")
         if not 1 <= self.max_pending_messages_per_user <= 1000 or not 1 <= self.message_retention_days <= 30:

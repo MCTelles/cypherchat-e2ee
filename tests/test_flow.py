@@ -18,7 +18,7 @@ from seguranca_auditoria.main import app  # noqa: E402
 from seguranca_auditoria.models import AuditLog, EncryptedMessage, User, UserRole  # noqa: E402
 from seguranca_auditoria.rate_limit import http_limiter, login_limiter, ws_limiter  # noqa: E402
 from seguranca_auditoria.security.e2ee import Identity, b64, decrypt, encrypt, unb64  # noqa: E402
-from seguranca_auditoria.client import checked_public_keys  # noqa: E402
+from seguranca_auditoria.terminal_client import checked_public_keys  # noqa: E402
 
 
 @pytest.fixture
