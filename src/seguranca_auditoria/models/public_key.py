@@ -12,16 +12,18 @@ class PublicKey(SQLModel, table=True):
     user_id: UUID = Field(
         foreign_key="users.id",
         index=True,
+        unique=True,
         nullable=False,
         ondelete="CASCADE",
     )
     public_key: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    signing_public_key: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     fingerprint: str = Field(
         sa_column=Column(String(64), unique=True, index=True, nullable=False)
     )
     algorithm: str = Field(
         default="X25519",
-        sa_column=Column(String(30), nullable=False),
+        sa_column=Column(String(64), nullable=False),
     )
     is_active: bool = Field(default=True, index=True, nullable=False)
     created_at: datetime = Field(

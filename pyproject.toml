@@ -1,7 +1,7 @@
 [project]
 name = "seguranca-auditoria"
 version = "0.1.0"
-description = "Add your description here"
+description = "Aplicação local de mensagens E2EE com FastAPI, WebSocket e auditoria"
 readme = "README.md"
 authors = [
     { name = "MCTelles", email = "marcelotelles.033@outlook.com" }
@@ -19,11 +19,15 @@ dependencies = [
     "pwdlib[argon2]>=0.3.1",
     "slowapi>=0.1.10",
     "pydantic-settings>=2.15.0",
+    "httpx>=0.28.1",
+    "websockets>=17.0",
 ]
 
 [project.scripts]
 seguranca-auditoria = "seguranca_auditoria:main"
 init-db = "seguranca_auditoria.database:create_db_and_tables"
+cypherchat = "seguranca_auditoria.client:main"
+bootstrap-admin = "seguranca_auditoria.bootstrap:main"
 
 [build-system]
 requires = ["uv_build>=0.12.8,<0.13.0"]
@@ -31,6 +35,5 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.1.1",
 ]

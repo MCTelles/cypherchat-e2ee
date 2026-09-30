@@ -11,8 +11,11 @@ def get_engine():
     settings = get_settings()
     return create_engine(
         settings.database_url,
-        echo=settings.app_env == "development",
+        echo=False,
         pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=0,
+        pool_timeout=5,
     )
 
 

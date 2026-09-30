@@ -1,0 +1,7 @@
+# Put these values in postgresql.conf, then restart PostgreSQL.
+# The API can serve LAN clients while its database remains on the server itself.
+listen_addresses = 'localhost'
+password_encryption = 'scram-sha-256'
+max_connections = 40
+statement_timeout = '5s'
+idle_in_transaction_session_timeout = '10s'

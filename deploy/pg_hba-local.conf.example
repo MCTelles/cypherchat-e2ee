@@ -1,0 +1,6 @@
+# Put these entries before broader host rules in pg_hba.conf.
+# Remove or override any rule permitting remote access to cypherchat.
+host cypherchat cypherchat_owner 127.0.0.1/32 scram-sha-256
+host cypherchat cypherchat_app   127.0.0.1/32 scram-sha-256
+host cypherchat cypherchat_owner ::1/128      scram-sha-256
+host cypherchat cypherchat_app   ::1/128      scram-sha-256

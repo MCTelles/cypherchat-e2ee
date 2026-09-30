@@ -16,3 +16,7 @@ wheels/
 .env
 .env.*
 !.env.example
+
+# Presentation build and validation files
+presentation/.build/
+.codex-finalizer/

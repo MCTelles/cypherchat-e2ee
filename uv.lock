@@ -967,6 +967,7 @@ dependencies = [
     { name = "alembic" },
     { name = "cryptography" },
     { name = "fastapi", extra = ["standard"] },
+    { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pwdlib", extra = ["argon2"] },
     { name = "pydantic-settings" },
@@ -975,11 +976,11 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
 ]
 
@@ -988,6 +989,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.20.0" },
     { name = "cryptography", specifier = ">=41.0.3,<42.0.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.141.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
     { name = "pwdlib", extras = ["argon2"], specifier = ">=0.3.1" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
@@ -996,11 +998,11 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.54" },
     { name = "sqlmodel", specifier = ">=0.0.47" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.23.2" },
+    { name = "websockets", specifier = ">=17.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest", specifier = ">=9.1.1" },
 ]
 

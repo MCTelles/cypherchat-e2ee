@@ -31,10 +31,10 @@ class EncryptedMessage(SQLModel, table=True):
     )
     ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     nonce: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
-    ephemeral_public_key: bytes | None = Field(
-        default=None,
-        sa_column=Column(LargeBinary, nullable=True),
+    ephemeral_public_key: bytes = Field(
+        sa_column=Column(LargeBinary, nullable=False),
     )
+    signature: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     algorithm: str = Field(sa_column=Column(String(50), nullable=False))
     status: MessageStatus = Field(
         default=MessageStatus.PENDING,
