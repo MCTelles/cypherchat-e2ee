@@ -15,6 +15,8 @@ import {
   encrypt,
   decrypt,
 } from "./crypto.js";
+import { openHistory, sealHistory } from "./history.js";
+import { clearSession, loadSession, saveSession } from "./session.js";
 const app = document.querySelector("#app");
 const state = {
   page: "login",
@@ -24,6 +26,7 @@ const state = {
   contacts: [],
   selected: null,
   messages: {},
+  historyWritable: true,
   pending: [],
   incoming: [],
   socket: null,
@@ -85,6 +88,41 @@ const esc = (s) =>
 const initials = (s) => esc(s.slice(0, 2).toUpperCase());
 const avatar = (u) => `<span class="avatar">${initials(u.username)}</span>`;
 const vaultName = (u) => `cypherchat.vault.${u}`;
+const historyName = (userId) => `cypherchat.history.${userId}`;
+let historyWrites = Promise.resolve();
+
+async function restoreHistory() {
+  try {
+    const saved = localStorage.getItem(historyName(state.me.id));
+    state.messages = saved
+      ? await openHistory(state.identity, state.me.id, JSON.parse(saved))
+      : {};
+    for (const items of Object.values(state.messages))
+      for (const message of items)
+        if (message.own && message.status === "Enviando…")
+          message.status = "Envio não confirmado";
+    state.historyWritable = true;
+    return null;
+  } catch {
+    state.messages = {};
+    state.historyWritable = false;
+    return "A sessão automática não conseguiu abrir este histórico. Saia e entre novamente com sua senha; o app tentará migrá-lo sem apagar os dados.";
+  }
+}
+
+function saveHistory() {
+  if (!state.me?.id || !state.identity) return Promise.resolve();
+  if (!state.historyWritable)
+    return Promise.reject(Error("Histórico local indisponível"));
+  const userId = state.me.id;
+  const identity = state.identity;
+  const snapshot = structuredClone(state.messages);
+  historyWrites = historyWrites.catch(() => {}).then(async () => {
+    const sealed = await sealHistory(identity, userId, snapshot);
+    localStorage.setItem(historyName(userId), JSON.stringify(sealed));
+  });
+  return historyWrites;
+}
 const pins = () => {
   try {
     return (
@@ -177,6 +215,16 @@ async function receive(e) {
       time: time(),
       unread: state.selected !== c.id || state.page !== "chat",
     });
+  try {
+    await saveHistory();
+  } catch {
+    notify(
+      "Mensagem recebida, mas o histórico não foi salvo. Libere espaço no navegador antes de sair.",
+      "error",
+    );
+    render();
+    return;
+  }
   if (receivingSocket?.readyState === WebSocket.OPEN)
     receivingSocket.send(JSON.stringify({ type: "ack", id: e.id }));
   render();
@@ -209,11 +257,13 @@ function connect() {
         if (m) {
           m.id = e.id;
           m.status = "Enviada ✓";
+          await saveHistory();
         }
         render();
       } else if (e.type === "error") {
         const m = state.pending.shift();
         if (m) m.status = "Falha no envio";
+        if (m) await saveHistory();
         render();
         notify(e.detail, "error");
       }
@@ -227,13 +277,26 @@ function connect() {
     state.connecting = false;
     for (const m of state.pending) m.status = "Envio não confirmado";
     state.pending = [];
+    saveHistory().catch(() =>
+      notify("Não foi possível atualizar o histórico local.", "error"),
+    );
     render();
   };
   socket.onerror = () => {
     state.notice = "Não foi possível conectar o canal de mensagens.";
   };
 }
-function logout() {
+async function logout() {
+  try {
+    await saveHistory();
+  } catch {
+    notify("Não foi possível salvar o histórico local antes de sair.", "error");
+  }
+  try {
+    await clearSession();
+  } catch {
+    notify("Não foi possível encerrar a sessão local com segurança.", "error");
+  }
   state.socket?.close();
   Object.assign(state, {
     me: null,
@@ -243,6 +306,7 @@ function logout() {
     online: false,
     page: "login",
     messages: {},
+    historyWritable: true,
     drafts: {},
     connecting: false,
     pending: [],
@@ -357,7 +421,7 @@ app.addEventListener("click", async (e) => {
     } else if (action === "logout")
       confirmAction(
         "Sair da conta?",
-        "O histórico desta sessão será apagado. Suas chaves cifradas continuam neste navegador.",
+        "A sessão será encerrada. O histórico e o cofre de chaves continuam cifrados neste navegador.",
         "Sair",
         logout,
       );
@@ -578,11 +642,16 @@ app.addEventListener("submit", async (e) => {
         if (me.role !== "admin") {
           state.token = null;
           throw Error(
-            "Cofre local não encontrado. Importe o cofre desta conta.",
+            "Esta conta não tem cofre de chaves neste navegador. Importe um cofre exportado da interface web. Se a conta foi criada no terminal, use outra conta na web.",
           );
         }
         state.me = me;
         state.page = "admin";
+        try {
+          await saveSession(token.access_token, me, null);
+        } catch {
+          notify("A sessão não será restaurada automaticamente após recarregar esta aba.", "error");
+        }
         await loadAdmin();
         render();
         return;
@@ -598,9 +667,24 @@ app.addEventListener("submit", async (e) => {
       state.me = me;
       state.identity = identity;
       state.page = "chat";
+      const historyWarning = await restoreHistory();
+      if (!historyWarning) {
+        try {
+          state.identity = await saveSession(token.access_token, me, identity);
+        } catch {
+          notify("A sessão não será restaurada automaticamente após recarregar esta aba.", "error");
+        }
+      } else {
+        try {
+          await clearSession();
+        } catch {
+          sessionStorage.removeItem("cypherchat.active-session");
+        }
+      }
       await directory();
-      connect();
+      if (!historyWarning) connect();
       render();
+      if (historyWarning) notify(historyWarning, "error");
     } else if (form.id === "send-form") {
       const c = state.contacts.find((x) => x.id === state.selected),
         sendingSocket = state.socket;
@@ -629,11 +713,30 @@ app.addEventListener("submit", async (e) => {
         sendingSocket.readyState !== WebSocket.OPEN
       )
         throw Error("Conexão interrompida. Seu rascunho foi mantido.");
-      sendingSocket.send(JSON.stringify({ type: "send", ...envelope }));
       state.pending.push(m);
       (state.messages[c.id] ||= []).push(m);
       if (state.drafts[c.id] === data.message) state.drafts[c.id] = "";
       render();
+      try {
+        await saveHistory();
+      } catch {
+        state.pending = state.pending.filter((pending) => pending !== m);
+        state.messages[c.id] = state.messages[c.id].filter(
+          (message) => message !== m,
+        );
+        throw Error(
+          "Não foi possível salvar o histórico local. Libere espaço no navegador e tente novamente.",
+        );
+      }
+      if (
+        state.socket !== sendingSocket ||
+        sendingSocket.readyState !== WebSocket.OPEN
+      ) {
+        m.status = "Envio não confirmado";
+        await saveHistory();
+        throw Error("Conexão interrompida. Seu rascunho foi mantido.");
+      }
+      sendingSocket.send(JSON.stringify({ type: "send", ...envelope }));
     } else if (form.id === "profile-form") {
       state.me = await api("/me", {
         method: "PATCH",
@@ -650,16 +753,21 @@ app.addEventListener("submit", async (e) => {
           password: data.current,
         }),
       });
-      await unlock(
+      const unlockedIdentity = await unlock(
         JSON.parse(localStorage.getItem(vaultName(state.me.username))),
         data.current,
       );
-      const vault = await protect(state.identity, data.password);
+      const vault = await protect(unlockedIdentity, data.password);
       await api("/me", {
         method: "PATCH",
         body: JSON.stringify({ password: data.password }),
       });
       localStorage.setItem(vaultName(state.me.username), JSON.stringify(vault));
+      try {
+        state.identity = await saveSession(state.token, state.me, unlockedIdentity);
+      } catch {
+        notify("Senha atualizada. Esta sessão pode pedir login após recarregar a aba.", "error");
+      }
       form.reset();
       notify(
         "Senha da conta e do cofre atualizadas. Exporte novamente seu cofre.",
@@ -903,4 +1011,71 @@ window.addEventListener("storage", (e) => {
   }
 });
 
-render();
+async function resumeSession() {
+  let saved = null;
+  try {
+    saved = await loadSession();
+    if (!saved) {
+      render();
+      return;
+    }
+    state.token = saved.token;
+    const me = await api("/me");
+    state.me = me;
+    if (!saved.identity) {
+      if (me.role !== "admin") throw Error("Sessão local sem chaves de usuário");
+      state.page = "admin";
+      await loadAdmin();
+      return;
+    }
+    const own = await api(`/users/${me.id}/key`);
+    if (
+      own.public_key !== saved.identity.public_key ||
+      own.signing_public_key !== saved.identity.signing_public_key
+    )
+      throw Error("Sessão local não corresponde às chaves da conta");
+    state.identity = saved.identity;
+    state.page = "chat";
+    const historyWarning = await restoreHistory();
+    if (historyWarning) {
+      await clearSession();
+      Object.assign(state, {
+        me: null,
+        token: null,
+        identity: null,
+        page: "login",
+        messages: {},
+        historyWritable: true,
+      });
+      render();
+      notify(historyWarning, "error");
+      return;
+    }
+    await directory();
+    connect();
+    render();
+  } catch (error) {
+    const sessionRejected =
+      error.status === 401 || error.message?.startsWith("Sessão local");
+    if (!saved || sessionRejected) {
+      try {
+        await clearSession();
+      } catch {
+        sessionStorage.removeItem("cypherchat.active-session");
+      }
+    }
+    Object.assign(state, {
+      me: null,
+      token: null,
+      identity: null,
+      page: "login",
+      messages: {},
+      historyWritable: true,
+    });
+    render();
+    if (saved && !sessionRejected)
+      notify("Não consegui restaurar a sessão. Ela foi mantida; recarregue quando o servidor voltar.", "error");
+  }
+}
+
+resumeSession();
