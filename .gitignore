@@ -20,3 +20,6 @@ wheels/
 # Presentation build and validation files
 presentation/.build/
 .codex-finalizer/
+
+# Local PostgreSQL binaries, data, logs and administrative credentials
+.local/

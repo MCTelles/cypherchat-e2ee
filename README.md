@@ -24,6 +24,15 @@ O comando `cypherchat` usa `seguranca_auditoria.terminal_client` e o protocolo X
 
 ## Execução local
 
+### Windows: PostgreSQL isolado do projeto
+
+O procedimento está em [deploy/README-windows.md](deploy/README-windows.md).
+Ele cria `.env`, banco, tabelas e permissões automaticamente, com credenciais
+aleatórias, usando os mesmos scripts SQL abaixo. A aplicação conecta como
+`cypherchat_app`; a senha do proprietário não fica no `.env`.
+
+### Configuração manual
+
 Requer Python 3.14, `uv` e PostgreSQL. O caminho mais rápido para testes automatizados usa SQLite isolado; a instalação de demonstração deve usar PostgreSQL para cumprir os requisitos de roles e conexão local.
 
 ```sh
