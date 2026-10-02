@@ -405,18 +405,38 @@ def test_client_module_does_not_import_server_stack():
 
 
 def test_private_key_files(tmp_path):
+    import os
+    import subprocess
+
     path = tmp_path / "k.bin"
     raw = generate_private_key_file(path)
-    assert oct(path.stat().st_mode & 0o777) == "0o600" and len(raw) == 32
+    assert len(raw) == 32
+    if os.name != "nt":
+        assert oct(path.stat().st_mode & 0o777) == "0o600"
     assert load_private_key_file(path) == raw
     with pytest.raises(FileExistsError):
         generate_private_key_file(path)
     assert load_private_key_file(path) == raw  # not overwritten
-    path.chmod(0o644)
+    if os.name == "nt":
+        subprocess.run(["icacls", str(path), "/grant", "*S-1-1-0:R"], check=True, capture_output=True)
+    else:
+        path.chmod(0o644)
     with pytest.raises(PermissionError):
         load_private_key_file(path)
     short = tmp_path / "short.bin"
+    generate_private_key_file(short)
     short.write_bytes(b"x")
-    short.chmod(0o600)
     with pytest.raises(ValueError):
         load_private_key_file(short)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL inheritance")
+def test_private_key_rejects_inherited_windows_acl(tmp_path):
+    import subprocess
+
+    path = tmp_path / "key with spaces ' quote.bin"
+    raw = generate_private_key_file(path)
+    assert load_private_key_file(path) == raw
+    subprocess.run(["icacls", str(path), "/inheritance:e"], check=True, capture_output=True)
+    with pytest.raises(PermissionError):
+        load_private_key_file(path)
